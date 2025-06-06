@@ -5,9 +5,9 @@ def V2c (Vpath,Cpath):
             cpp.write('#include <stdbool.h>\n')
             cpp.write('#include <math.h>\n\n')
             cpp.write('int main(){\n')
-            cpp.write('    bool A[12];\n')
-            cpp.write('    bool B[12];\n')
-            cpp.write('    bool O[24];\n')
+            cpp.write('    bool A[8];\n')
+            cpp.write('    bool B[8];\n')
+            cpp.write('    bool O[16];\n')
             cpp.write('    bool N[3000];\n\n')
             cpp.write('    int result = 0;\n')
             cpp.write('    int real = 0;\n')
@@ -15,10 +15,10 @@ def V2c (Vpath,Cpath):
             cpp.write('    unsigned long long error = 0;\n')
             cpp.write('    float snr = 0;\n')
             cpp.write('    unsigned long long allreal2 = 0;\n\n')
-            cpp.write('    for(int mc = 0; mc < 1000000 ; mc++){\n')
-            cpp.write('        int i = rand() % 4096-2048;\n')
-            cpp.write('        int j = rand() % 4096-2048;\n')
-            cpp.write('            for(int k = 0; k < 12; k++){\n')
+            cpp.write('    for(int mc = 0; mc < 100000 ; mc++){\n')
+            cpp.write('        int i = rand() % 256-128;\n')
+            cpp.write('        int j = rand() % 256-128;\n')
+            cpp.write('            for(int k = 0; k < 8; k++){\n')
             cpp.write('                A[k] = (i >> k) & 1;\n')
             cpp.write('                B[k] = (j >> k) & 1;\n')
             cpp.write('            }\n')
@@ -28,10 +28,10 @@ def V2c (Vpath,Cpath):
                     line = line.replace(']N', ']').strip()
                     line = line.replace('1\'b', '').strip()
                     cpp.write('            ' + line + '\n')
-            cpp.write('            for(int k = 0; k < 23; k++){\n')
+            cpp.write('            for(int k = 0; k < 15; k++){\n')
             cpp.write('                result += O[k]* pow(2,k);\n')
             cpp.write('            }\n')
-            cpp.write('            result -= O[23]*pow(2,23);\n')
+            cpp.write('            result -= O[15]*pow(2,15);\n')
             cpp.write('            real = i*j;\n')
             cpp.write('            error += pow(real-result,2);\n')
             cpp.write('            allreal2 += pow(real,2);\n')
@@ -49,7 +49,7 @@ import re
 
 def run_cpp_file(file_path):
     # 编译.cpp文件
-    compile_process = subprocess.run(['g++', file_path, '-o', r'/home/aic711/nanoLAMG/GPT-PPO/output.exe'], capture_output=True, text=True)
+    compile_process = subprocess.run(['g++', file_path, '-o', r'output.exe'], capture_output=True, text=True)
     
     if compile_process.returncode != 0:
         print("编译错误：")
@@ -58,7 +58,7 @@ def run_cpp_file(file_path):
         return run_process
     
     # 运行编译后的可执行文件
-    run_process = subprocess.run([r'/home/aic711/nanoLAMG/GPT-PPO/output.exe'], capture_output=True, text=True)
+    run_process = subprocess.run([r'output.exe'], capture_output=True, text=True)
     
     if run_process.returncode != 0:
         print("运行错误：")
@@ -68,4 +68,6 @@ def run_cpp_file(file_path):
     return run_process.stdout
 
 if __name__ == '__main__':
-    V2c(r'muls8_46277\85_mul8s_1KV6_MSE_38902.6_area_222.04_delay_1860.02.v',r'multi.cpp')
+    V2c(r'temp.v',r'multi.cpp')
+    output = run_cpp_file(r'multi.cpp')
+    print(output)

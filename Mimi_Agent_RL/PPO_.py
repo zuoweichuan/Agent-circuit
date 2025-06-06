@@ -46,7 +46,7 @@ class ValueNet(torch.nn.Module):
 class PPO:
     ''' PPO算法,采用截断方式 '''
     def __init__(self, model_args,state_dim, hidden_dim, action_dim, actor_lr, critic_lr,
-                 lmbda, epochs, eps, gamma, device, gpt_model_path,dropout_rate=0.5):
+                 lmbda, epochs, eps, gamma, device, gpt_model_path,dropout_rate=0.5,env=None):
         if gpt_model_path:
             checkpoint = torch.load(gpt_model_path, map_location=device)
             checkpoint_model_args = checkpoint['model_args']
@@ -74,6 +74,15 @@ class PPO:
         self.epochs = epochs  # 一条序列的数据用来训练轮数
         self.eps = eps  # PPO中截断范围的参数
         self.device = device
+        self.env = env
+
+        self.actor_scheduler = torch.optim.lr_scheduler.StepLR(self.actor_optimizer, step_size=100, gamma=0.9)
+        self.critic_scheduler = torch.optim.lr_scheduler.StepLR(self.critic_optimizer, step_size=100, gamma=0.9)
+
+        self.initial_entropy_coef = 0.01  # 初始熵系数
+        self.entropy_coef = self.initial_entropy_coef  # 当前熵系数
+        self.entropy_decay = 0.995  # 每次更新后的衰减率
+        self.min_entropy_coef = 0.001  # 最小熵系数
 
     def take_action(self, state, mask_, epsilon=0.1):
             state = torch.tensor([state], dtype=torch.long).to(self.device)
@@ -119,6 +128,7 @@ class PPO:
                 batch_td_delta = batch_td_target - self.critic(batch_states_f)
 
                 batch_advantage = rl_utils.compute_advantage(self.gamma, self.lmbda, batch_td_delta.cpu()).to(self.device)
+                batch_advantage = (batch_advantage - batch_advantage.mean()) / (batch_advantage.std() + 1e-8)
                 batch_old_log_probs = torch.log(self.actor(batch_states_f).gather(1, batch_actions) + 1e-5).detach()
 
             td_target_f.append(batch_td_target)
@@ -143,22 +153,36 @@ class PPO:
         rewards = torch.tensor(transition_dict['rewards'], dtype=torch.long).view(-1, 1).to(self.device)
         next_states = torch.tensor(transition_dict['next_states'], dtype=torch.long).to(self.device)
         dones = torch.tensor(transition_dict['dones'], dtype=torch.long).view(-1, 1).to(self.device)
+        entropy_coef = 0.01  # 熵系数，可调整
         
         # 使用Transformer提取特征
-        td_target, advantage, old_log_probs = self.process_in_batches(states, next_states,rewards,dones,actions, batch_size=32)
+        td_target, advantage, old_log_probs = self.process_in_batches(states, next_states,rewards,dones,actions, batch_size=8)
         
         # td_target = rewards + self.gamma * self.critic(next_states_f) * (1 - dones)
         # td_delta = td_target - self.critic(states_f)
         # advantage = rl_utils.compute_advantage(self.gamma, self.lmbda, td_delta.cpu()).to(self.device)
         # old_log_probs = torch.log(self.actor(states_f).gather(1, actions)).detach()
 
-        batch_size = 32  # 设置批次大小
+        batch_size = 8  # 设置批次大小
         num_samples = states.size(0)
         indices = list(range(num_samples))
+
+        # 添加指标收集容器
+        epoch_actor_losses = []
+        epoch_critic_losses = []
+        epoch_entropies = []
+        epoch_advantages = []
 
         for eco in range(self.epochs):
             random.shuffle(indices)
             print(f'epoch {eco + 1} begin !')
+
+            # 单个epoch的指标收集器
+            batch_actor_losses = []
+            batch_critic_losses = []
+            batch_entropies = []
+            batch_advantages = []
+
             for start in range(0, num_samples - batch_size + 1):
                 # print(start)
                 end = start + batch_size
@@ -167,38 +191,17 @@ class PPO:
                 batch_states = states[batch_indices]
                 batch_actions = actions[batch_indices]
                 batch_advantage = advantage[batch_indices]
-                if torch.isnan(batch_advantage).any() or torch.isinf(batch_advantage).any():
-                    print(start)
-                    raise ValueError("Batch advantage contains NaN or Inf values")
                 batch_old_log_probs = old_log_probs[batch_indices]
-                if torch.isnan(batch_old_log_probs).any() or torch.isinf(batch_old_log_probs).any():
-                    print(start)
-                    raise ValueError("Batch old log probs contains NaN or Inf values")
                 batch_td_target = td_target[batch_indices]
-                if torch.isnan(batch_td_target).any() or torch.isinf(batch_td_target).any():
-                    print(start)
-                    raise ValueError("Batch td_target contains NaN or Inf values")
-
-                if torch.isnan(batch_states).any() or torch.isinf(batch_states).any():
-                    print(start)
-                    raise ValueError("Batch states contains NaN or Inf values")
                     
-                
                 
                 # 使用Transformer提取特征
                 batch_states_f, _, _ = self.transformer(batch_states)
                 batch_states_f = F.softmax(batch_states_f, dim=-1)
                 batch_states_f = batch_states_f.squeeze(1)
 
-                if torch.isnan(batch_states_f).any() or torch.isinf(batch_states_f).any():
-                    print(start)
-                    raise ValueError("Batch states f contains NaN or Inf values")
                 
                 batch_log_probs = torch.log(self.actor(batch_states_f).gather(1, batch_actions) + 1e-5)
-
-                if torch.isnan(batch_log_probs).any() or torch.isinf(batch_log_probs).any():
-                    print(start)
-                    raise ValueError("Batch log probs contains NaN or Inf values")
 
                 ratio = torch.exp(batch_log_probs - batch_old_log_probs)
                 if torch.isnan(ratio).any() or torch.isinf(ratio).any():
@@ -213,10 +216,18 @@ class PPO:
                 # critic_values.append(batch_critic_values)
 
             # critic_values = torch.cat(critic_values, dim=0)
+                probs = self.actor(batch_states_f)
+                dist_entropy = -torch.sum(probs * torch.log(probs + 1e-10), dim=1).mean()
 
                 actor_loss = torch.mean(-torch.min(surr1, surr2))  # PPO损失函数
                 critic_loss = torch.mean(F.mse_loss(self.critic(batch_states_f), batch_td_target.detach()))
-                total_loss = actor_loss + critic_loss   
+                total_loss = 0.8*actor_loss + 0.2*critic_loss + self.entropy_coef * dist_entropy 
+
+                # 收集指标
+                batch_actor_losses.append(actor_loss.item())
+                batch_critic_losses.append(critic_loss.item())
+                batch_entropies.append(dist_entropy.item())
+                batch_advantages.append(batch_advantage.mean().item())
                 
                 if torch.isnan(total_loss).any() or torch.isinf(total_loss).any():
                     print(start)
@@ -237,9 +248,34 @@ class PPO:
                 self.critic_optimizer.step()
                 self.transformer_optimizer.step()
 
+                self.actor_scheduler.step()
+                self.critic_scheduler.step() 
+
                 torch.cuda.empty_cache()
-        
+            # 收集当前epoch的平均指标
+            epoch_actor_losses.append(np.mean(batch_actor_losses))
+            epoch_critic_losses.append(np.mean(batch_critic_losses))
+            epoch_entropies.append(np.mean(batch_entropies))
+            epoch_advantages.append(np.mean(batch_advantages))
             self.save('PPO_out/ckpt.pt')
+        
+        # 计算所有epoch的平均指标
+        mean_actor_loss = np.mean(epoch_actor_losses)
+        mean_critic_loss = np.mean(epoch_critic_losses)
+        mean_entropy = np.mean(epoch_entropies)
+        mean_advantage = np.mean(epoch_advantages)
+        self.entropy_coef = max(self.min_entropy_coef, 
+                           self.entropy_coef * self.entropy_decay)
+        
+        # 记录到环境的logger
+        if hasattr(self, 'env') and hasattr(self.env, 'logger'):
+            self.env.logger.log_training(
+                actor_loss=mean_actor_loss,
+                critic_loss=mean_critic_loss,
+                entropy=mean_entropy,
+                advantage=mean_advantage
+            )
+
         torch.cuda.empty_cache()
     
     def save(self, path):

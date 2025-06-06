@@ -1,5 +1,4 @@
 import random
-
 import os
 import time
 import math
@@ -16,60 +15,12 @@ from PPO_ import PPO
 import rl_utils
 import env
 
+# 导入配置文件
+from config import *
+
 import torch._dynamo
-torch._dynamo.config.suppress_errors = True
+torch._dynamo.config.suppress_errors = True # suppress errors in dynamo, so that we can use torch.compile without issues
 #-------------------------------------------
-max_iters = 320000
-log_interval = 160
-eval_interval = 3200
-eval_iters = 3200
-decay_lr = True # whether to decay the learning rate
-warmup_iters = 9600 # how many steps to warm up for
-lr_decay_iters = 280000 # should be ~= max_iters per Chinchilla
-min_lr = 1e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
-grad_clip = 1.0
-learning_rate = 5e-4
-weight_decay = 1e-1
-beta1 = 0.9
-beta2 = 0.95
-gradient_accumulation_steps = 1
-batch_size = 32
-block_size = 512
-n_layer = 16
-n_head = 32
-n_embd = 512
-dropout = 0.2 # for pretraining 0 is good, for finetuning try 0.1+
-eval_only = False # whether to only run eval and then stop
-bias = False # do we use bias inside LayerNorm and Linear layers?
-always_save_checkpoint = False # whether to save a checkpoint on every eval
-compile = False # whether to compile the model using torch.jit.script
-init_from = 'scratch' # 'scratch', 'resume', or 'gpt2-medium'
-meta_path = r'/home/aic711/nanoLAMG/GPT-PPO/data/meta.pkl'
-GPT_out_dir = r'/home/aic711/nanoLAMG/GPT-PPO/GPT_out'
-Train_model = 'PPO'    # 'GPT' or 'PPO'
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
-#-------------------------------------------
-gpt_model_path = r'/home/aic711/nanoLAMG/GPT-PPO/GPT_out/ckpt.pt'
-load_checkpoint = True
-max_steps = 2048
-line_range = 200
-mse_max = 8743
-actor_lr = 1e-4
-critic_lr = 1e-4
-num_episodes = 100
-hidden_dim = [64,128,256,512]
-dropout_rate = 0.2
-gamma = 0.90
-lmbda = 0.95
-epochs = 2
-eps = 0.2
-action_dim = 8
-#-------------------------------------------
-iter_num = 0
-best_val_loss = 1000000
-seed_offset = 0
-local_iter_num = 0 
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read()) # overrides from command line or config file
 config = {k: globals()[k] for k in config_keys} # will be useful for logging
@@ -280,7 +231,7 @@ else:
         state = f.read()
     Envi = env.Env(state = state, line_range = line_range, mse_max = mse_max,stoi = stoi, block_size=block_size)
     agent = PPO(model_args,state_dim, hidden_dim, action_dim, actor_lr, critic_lr, lmbda,
-             epochs, eps, gamma, device, gpt_model_path,dropout_rate)
+             epochs, eps, gamma, device, gpt_model_path,dropout_rate,env=Envi)
     
     if load_checkpoint:
         agent.load('PPO_out/ckpt.pt')

@@ -41,3 +41,66 @@ def estimate_loss(model, ctx, eval_iters):
         out[split] = losses.mean()
     model.train()
     return out
+
+import re
+
+def EVO_To_C(path, i):
+    with open(path,'r') as f:
+        Top_module = f.read()
+    while 'S_' in Top_module:
+        x = re.search(r'S_\d+_\d{2}', Top_module)
+        if x is None:
+            x = re.search(r'S_\d+_\d', Top_module)
+        Top_module = Top_module.replace(x.group(), 'N[' + str(i) + ']')
+        i += 1
+    while 'C_' in Top_module:
+        x = re.search(r'C_\d+_\d{2}', Top_module)
+        if x is None:
+            x = re.search(r'C_\d+_\d+', Top_module)
+        Top_module = Top_module.replace(x.group(), 'N[' + str(i) + ']')
+        i += 1
+    with open(path,'w') as f:
+        f.write(Top_module)
+    print(i)
+
+def ABC_To_C(path):
+    with open (path,'r') as f:
+        Top_module = f.read()
+    Top_module = re.findall(r'  assign.*;', Top_module)
+    Top_module = '\n'.join(Top_module)
+    Top_module = re.sub(r'\\','',Top_module)
+    Top_module = re.sub(r'\~','!',Top_module)
+    Top_module = re.sub(r'new_n(\d+)', r'N[\1]', Top_module)
+
+    with open(path,'w') as f:
+        f.write(Top_module)
+
+def C_To_ABC(path):
+    with open (path,'r') as f:
+        Top_module = f.read()
+
+    Top_module = re.sub(r'A',r'\\A',Top_module)
+    Top_module = re.sub(r'B',r'\\B',Top_module)
+    Top_module = re.sub(r'O',r'\\O',Top_module)
+    Top_module = re.sub(r'Z',r'\\Z',Top_module)
+    Top_module = re.sub(r'!',r'~',Top_module)
+    Top_module = re.sub(r'N\[(\d+)\]', r'new_n\1', Top_module)
+
+    with open(path,'w') as f:
+        f.write(Top_module)
+
+def Save(path, save_path):
+    with open (path,'r') as f:
+        content = f.read()
+    with open(save_path,'w') as f:
+        f.write("module mul8s (clock,A,B,O);\n  input clock;\n  input [7:0] A;\n  input [7:0] B;\n  output [15:0] O;\n  wire [600:0] N;\n")
+        f.write(content)
+        f.write("\nendmodule")
+
+if __name__ == "__main__":
+    Path = 'temp.v'
+    # Save_path = 'Result/11x11/mul11u_mse2.3e7_ar427.56.v'
+    ABC_To_C(Path)
+    #C_To_ABC(Path)
+    # Save(Path,Save_path)
+    #EVO_To_C(Path,972)
